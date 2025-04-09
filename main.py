@@ -71,7 +71,8 @@ def fetch_sensors(field_id):
 
 
 # Функция симуляции данных
-def simulate_sensor_data(sensor_name, field_id, num_sends, total_time, unit, min_value, max_value, repeat, log_text):
+def simulate_sensor_data(sensor_name, field_id, num_sends, total_time, unit, min_value, max_value, repeat,
+                         accuracy_class, extra_params, log_text):
     global running
     if num_sends <= 0 or total_time <= 0:
         messagebox.showerror("Ошибка", "Количество отправок и время должны быть больше 0")
@@ -84,7 +85,7 @@ def simulate_sensor_data(sensor_name, field_id, num_sends, total_time, unit, min
 
     # Рассчитываем задержку между отправками
     if num_sends > 1:
-        delay_between_sends = total_time / (num_sends - 1)
+        delay_between_sends = total_time / (num_sends)
     else:
         delay_between_sends = total_time
 
@@ -99,20 +100,38 @@ def simulate_sensor_data(sensor_name, field_id, num_sends, total_time, unit, min
             # Генерируем случайное значение в заданном диапазоне
             value = round(random.uniform(min_value, max_value), 1)
             # Используем текущий timestamp с миллисекундами
-            current_time = time.time()  # Вызываем time.time() один раз
+            current_time = time.time()
             timestamp = time.strftime("%Y-%m-%dT%H:%M:%S",
                                       time.gmtime(current_time)) + f".{int(current_time * 1000) % 1000:03d}Z"
-            payload = json.dumps({
+
+            # Формируем данные с учётом новых полей
+            payload_dict = {
                 "sensorName": sensor_name,
                 "value": value,
                 "fieldId": field_id,
                 "unit": unit,
                 "timestamp": timestamp
-            })
+            }
+            if accuracy_class:  # Добавляем только если указано
+                payload_dict["accuracyClass"] = accuracy_class
+            if extra_params:  # Добавляем только если указано
+                try:
+                    extra_params_dict = json.loads(extra_params)
+                    payload_dict["extraParams"] = extra_params_dict
+                except json.JSONDecodeError:
+                    log_text.insert(tk.END, f"Ошибка: Некорректный формат JSON в дополнительных параметрах\n")
+                    log_text.see(tk.END)
+                    return
+
+            payload = json.dumps(payload_dict)
             result = client.publish(f"{TOPIC_PREFIX}{sensor_name}", payload)
             if result.rc == mqtt.MQTT_ERR_SUCCESS:
                 log_text.insert(tk.END,
                                 f"Отправка {i + 1}/{num_sends}: {value}{unit} в топик {TOPIC_PREFIX}{sensor_name} (время: {timestamp})\n")
+                if accuracy_class:
+                    log_text.insert(tk.END, f"Класс точности: {accuracy_class}\n")
+                if extra_params:
+                    log_text.insert(tk.END, f"Доп. параметры: {extra_params}\n")
                 log_text.see(tk.END)
                 print(f"Published to {TOPIC_PREFIX}{sensor_name}: {payload}")
             else:
@@ -150,19 +169,17 @@ def simulate_sensor_data(sensor_name, field_id, num_sends, total_time, unit, min
 def create_gui():
     window = tk.Tk()
     window.title("Имитатор датчиков")
-    window.geometry("400x650")
+    window.geometry("450x750")  # Увеличиваем размер окна для новых полей
 
     # Группа "Выбор источника"
     frame_source = tk.LabelFrame(window, text="Выбор источника", padx=10, pady=10)
     frame_source.pack(padx=10, pady=5, fill="x")
 
-    # Поле: Выберите поле
     tk.Label(frame_source, text="Выберите поле:").grid(row=0, column=0, sticky="w", pady=5)
     field_var = tk.StringVar()
     field_menu = ttk.Combobox(frame_source, textvariable=field_var, state="readonly")
     field_menu.grid(row=0, column=1, sticky="w", pady=5)
 
-    # Поле: Выберите датчик
     tk.Label(frame_source, text="Выберите датчик:").grid(row=1, column=0, sticky="w", pady=5)
     sensor_var = tk.StringVar()
     sensor_menu = ttk.Combobox(frame_source, textvariable=sensor_var, state="readonly")
@@ -180,7 +197,6 @@ def create_gui():
         if sensors:
             sensor_menu.set(sensors[0])
 
-    # Обновление списка датчиков при выборе поля
     def update_sensors(*args):
         field_name = field_var.get()
         if field_name in field_options:
@@ -198,40 +214,44 @@ def create_gui():
     frame_settings = tk.LabelFrame(window, text="Настройка отправки", padx=10, pady=10)
     frame_settings.pack(padx=10, pady=5, fill="x")
 
-    # Поле: Количество отправок
     tk.Label(frame_settings, text="Количество отправок:").grid(row=0, column=0, sticky="w", pady=5)
     num_sends_entry = tk.Entry(frame_settings)
     num_sends_entry.insert(0, "10")
     num_sends_entry.grid(row=0, column=1, sticky="w", pady=5)
 
-    # Поле: В течение (сек)
     tk.Label(frame_settings, text="В течение (сек):").grid(row=1, column=0, sticky="w", pady=5)
     total_time_entry = tk.Entry(frame_settings)
     total_time_entry.insert(0, "10")
     total_time_entry.grid(row=1, column=1, sticky="w", pady=5)
 
-    # Поле: Единицы измерения
     tk.Label(frame_settings, text="Единицы измерения:").grid(row=2, column=0, sticky="w", pady=5)
     unit_entry = tk.Entry(frame_settings)
     unit_entry.insert(0, "°C")
     unit_entry.grid(row=2, column=1, sticky="w", pady=5)
 
-    # Поле: Минимальное значение
     tk.Label(frame_settings, text="Минимальное значение:").grid(row=3, column=0, sticky="w", pady=5)
     min_value_entry = tk.Entry(frame_settings)
     min_value_entry.insert(0, "15.0")
     min_value_entry.grid(row=3, column=1, sticky="w", pady=5)
 
-    # Поле: Максимальное значение
     tk.Label(frame_settings, text="Максимальное значение:").grid(row=4, column=0, sticky="w", pady=5)
     max_value_entry = tk.Entry(frame_settings)
     max_value_entry.insert(0, "35.0")
     max_value_entry.grid(row=4, column=1, sticky="w", pady=5)
 
-    # Чекбокс: Повторять симуляцию
+    tk.Label(frame_settings, text="Класс точности (опц.):").grid(row=5, column=0, sticky="w", pady=5)
+    accuracy_class_entry = tk.Entry(frame_settings)
+    accuracy_class_entry.insert(0, "±0.5%")  # Пример значения, можно оставить пустым
+    accuracy_class_entry.grid(row=5, column=1, sticky="w", pady=5)
+
+    tk.Label(frame_settings, text="Доп. параметры (JSON, опц.):").grid(row=6, column=0, sticky="w", pady=5)
+    extra_params_entry = tk.Text(frame_settings, height=3, width=20)
+    extra_params_entry.insert(tk.END, '{"batteryLevel": "80%"}')  # Пример значения, можно оставить пустым
+    extra_params_entry.grid(row=6, column=1, sticky="w", pady=5)
+
     repeat_var = tk.BooleanVar()
     repeat_checkbox = tk.Checkbutton(frame_settings, text="Повторять симуляцию", variable=repeat_var)
-    repeat_checkbox.grid(row=5, column=0, columnspan=2, sticky="w", pady=5)
+    repeat_checkbox.grid(row=7, column=0, columnspan=2, sticky="w", pady=5)
 
     # Кнопки
     button_frame = tk.Frame(window)
@@ -246,7 +266,7 @@ def create_gui():
     # Лог событий
     log_frame = tk.LabelFrame(window, text="Лог событий", padx=10, pady=10)
     log_frame.pack(padx=10, pady=5, fill="both", expand=True)
-    log_text = tk.Text(log_frame, height=5)
+    log_text = tk.Text(log_frame, height=10)
     log_text.pack(fill="both", expand=True)
 
     # Логика кнопок
@@ -256,6 +276,9 @@ def create_gui():
         field_name = field_var.get().strip()
         unit = unit_entry.get().strip()
         repeat = repeat_var.get()
+        accuracy_class = accuracy_class_entry.get().strip() or None  # Оставляем None, если пусто
+        extra_params = extra_params_entry.get("1.0", tk.END).strip() or None  # Оставляем None, если пусто
+
         if not sensor_name or not field_name:
             messagebox.showwarning("Предупреждение", "Выберите поле и датчик")
             return
@@ -281,6 +304,14 @@ def create_gui():
             messagebox.showerror("Ошибка", "Минимальное значение должно быть меньше максимального")
             return
 
+        # Проверка формата JSON для extraParams
+        if extra_params:
+            try:
+                json.loads(extra_params)
+            except json.JSONDecodeError:
+                messagebox.showerror("Ошибка", "Некорректный формат JSON в дополнительных параметрах")
+                return
+
         field_id = field_options[field_name]
         if sensor_name in active_sensors:
             messagebox.showinfo("Информация", "Датчик уже активен")
@@ -290,11 +321,16 @@ def create_gui():
         running = True
         log_text.insert(tk.END,
                         f"Запуск симуляции для {sensor_name} (Поле: {field_name}, Единицы: {unit}, Диапазон: {min_value}-{max_value}, Повторение: {'Да' if repeat else 'Нет'})\n")
+        if accuracy_class:
+            log_text.insert(tk.END, f"Класс точности: {accuracy_class}\n")
+        if extra_params:
+            log_text.insert(tk.END, f"Доп. параметры: {extra_params}\n")
         log_text.see(tk.END)
 
         threading.Thread(
             target=simulate_sensor_data,
-            args=(sensor_name, field_id, num_sends, total_time, unit, min_value, max_value, repeat, log_text),
+            args=(sensor_name, field_id, num_sends, total_time, unit, min_value, max_value, repeat, accuracy_class,
+                  extra_params, log_text),
             daemon=True
         ).start()
 
